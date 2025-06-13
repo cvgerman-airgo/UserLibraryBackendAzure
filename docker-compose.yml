@@ -1,0 +1,61 @@
+services:
+  redis:
+    image: redis:7.2-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_DB: userlibrarydb
+      POSTGRES_USER: kraken
+      POSTGRES_PASSWORD: 1357Kraken1357
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: UserLibraryBackEndApi/Dockerfile
+    container_name: backend
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=userlibrarydb;Username=kraken;Password=1357Kraken1357
+      - Jwt__Key=2V8u7uZBKmJtFxS9rM4nLwYc6eR2p9Xa
+      - Jwt__Issuer=http://localhost
+      - Jwt__Audience=http://localhost
+      - Redis__Connection=redis:6379
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "5000:80"
+    volumes:
+      - ./files/app/covers:/app/covers
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./userlibrary-frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    volumes:
+      - ./userlibrary-frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - REACT_APP_API_URL=http://backend:80
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

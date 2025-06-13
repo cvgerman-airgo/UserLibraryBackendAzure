@@ -1,0 +1,44 @@
+﻿# Archivos y carpetas de Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+userlibrary-frontend/
+
+# Archivos de compilación
+bin/
+obj/
+out/
+
+# Archivos de publicación
+publish/
+*.Publish.xml
+
+# Archivos de configuración local
+appsettings.Development.json
+appsettings.Local.json
+
+# Archivos de logs
+*.log
+
+# Archivos de Docker (opcional, si no quieres subir imágenes locales)
+*.tar
+
+# Archivos de sistema
+*.DS_Store
+Thumbs.db
+
+# Archivos de test y cobertura
+TestResults/
+*.coverage
+*.coveragexml
+
+# Archivos de paquetes
+*.nupkg
+*.snupkg
+packages/
+
+# Archivos de Rider/JetBrains
+.idea/
+*.sln.iml
