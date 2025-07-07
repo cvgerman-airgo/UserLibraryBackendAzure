@@ -24,6 +24,8 @@ namespace Infrastructure.Services
         {
             try
             {
+                _logger.LogInformation("Guardando en Redis: {Key} = {Value} por {expiration}", key, value, expiration);
+
                 await _db.StringSetAsync(key, value, expiration);
             }
             catch (Exception ex)

@@ -11,6 +11,8 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Processing;
 using SixLabors.ImageSharp.Formats.Png;
 using Application.Interfaces;
+using Application.Helpers;
+using Infrastructure.Estensions;
 
 namespace UserLibraryBackEndApi.Controllers
 {
@@ -23,19 +25,22 @@ namespace UserLibraryBackEndApi.Controllers
         private readonly GoogleBooksService _googleBooksService;
         private readonly ILogger<BooksController> _logger;
         private readonly IImageService _imageService;
+        private readonly IOpenLibraryService _openLibraryService;
 
         public BooksController(
             IBooksRepository bookRepository,
             IMapper mapper,
             GoogleBooksService googleBooksService,
             ILogger<BooksController> logger,
-            IImageService imageService)
+            IImageService imageService,
+            IOpenLibraryService openLibraryService)
         {
             _bookRepository = bookRepository;
             _mapper = mapper;
             _googleBooksService = googleBooksService;
             _logger = logger;
             _imageService = imageService;
+            _openLibraryService = openLibraryService;
         }
 
         // GET: api/books
@@ -145,348 +150,175 @@ namespace UserLibraryBackEndApi.Controllers
             return NoContent();
         }
         // Endpoint de búsqueda en Google Books:
+
         [HttpGet("googlebooks/search")]
         public async Task<IActionResult> SearchGoogleBooks(
-            [FromQuery] string? title, 
-            [FromQuery] string? author, 
-            [FromQuery] string? language, 
-            [FromQuery] string? country)
+            [FromQuery] string? title,
+            [FromQuery] string? author,
+            [FromQuery] string? language)
         {
             if (string.IsNullOrWhiteSpace(title) && string.IsNullOrWhiteSpace(author))
-                return BadRequest("Debes indicar al menos un título o un autor.");
+            {
+                // En lugar de BadRequest, devuelve lista vacía para mantener estándar
+                return Ok(new List<BookDto>());
+            }
 
-            var query = "";
-            if (!string.IsNullOrWhiteSpace(title)) query += $"intitle:{title} ";
-            if (!string.IsNullOrWhiteSpace(author)) query += $"inauthor:{author}";
+            var books = await _googleBooksService.SearchGoogleBooksAsync(title, author, language);
 
-            var result = await _googleBooksService.SearchAsync(query.Trim(), language, country);
-            return Content(result, "application/json");
+            if (books == null || books.Count == 0)
+            {
+                return Ok(new List<BookDto>()); // No results found, responde con lista vacía
+            }
+
+            return Ok(books);
         }
 
 
-        //[HttpPost("import-from-google")]
-        //[Authorize]
-        //public async Task<IActionResult> ImportBookFromGoogle([FromBody] ImportBookFromGoogleRequest request)
-        //{
-        //    if (string.IsNullOrWhiteSpace(request.ISBN))
-        //        return BadRequest("El ISBN es obligatorio.");
 
-        //    var cleanIsbn = request.ISBN.Replace("-", "").Replace(" ", "");
-        //    if (cleanIsbn.Length != 10 && cleanIsbn.Length != 13)
-        //        return BadRequest("El ISBN debe tener 10 o 13 dígitos.");
-
-        //    var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier) ?? User.FindFirst("sub") ?? User.FindFirst("id");
-        //    if (userIdClaim == null || !Guid.TryParse(userIdClaim.Value, out var userId))
-        //        return Unauthorized("No se pudo determinar el ID del usuario autenticado.");
-
-        //    // Búsqueda solo por ISBN
-        //    var resultJson = await _googleBooksService.SearchAsync($"isbn:{cleanIsbn}");
-        //    _logger.LogInformation("📚 JSON recibido de Google Books para ISBN {ISBN}: {Json}", cleanIsbn, resultJson);
-
-        //    var result = JsonDocument.Parse(resultJson);
-        //    if (!result.RootElement.TryGetProperty("items", out var items) || items.GetArrayLength() == 0)
-        //        return NotFound($"No se encontró ningún libro con ISBN {request.ISBN}.");
-
-        //    JsonElement? selectedItem = null;
-
-        //    foreach (var item in items.EnumerateArray())
-        //    {
-        //        if (item.TryGetProperty("volumeInfo", out var vi) &&
-        //            vi.TryGetProperty("imageLinks", out var imgLinks) &&
-        //            imgLinks.TryGetProperty("thumbnail", out _))
-        //        {
-        //            selectedItem = item;
-        //            break; // toma el primero que tenga portada
-        //        }
-        //    }
-
-        //    // Si no encontró con portada, usa la primera
-        //    selectedItem ??= items[0];
-
-        //    var volume = selectedItem.Value.GetProperty("volumeInfo");
-        //    var accessInfo = selectedItem.Value.GetProperty("accessInfo");
-
-        //    string? fullCoverUrl = null;
-        //    string? thumbnailCoverUrl = null;
-        //    if (volume.TryGetProperty("imageLinks", out var imageLinks) &&
-        //        imageLinks.TryGetProperty("thumbnail", out var thumbnailProp))
-        //    {
-        //        var thumbnailUrl = thumbnailProp.GetString();
-        //        if (!string.IsNullOrWhiteSpace(thumbnailUrl))
-        //        {
-        //            try
-        //            {
-        //                (fullCoverUrl, thumbnailCoverUrl) = await _imageService.DownloadAndSaveCoverAsync(thumbnailUrl, cleanIsbn);
-        //            }
-        //            catch (Exception ex)
-        //            {
-        //                _logger.LogWarning("Error al descargar o guardar la imagen de portada: {Message}", ex.Message);
-        //            }
-        //        }
-        //    }
-
-        //    var existingBook = await _bookRepository.GetByIsbnAndUserIdAsync(cleanIsbn, userId);
-
-        //    if (existingBook != null)
-        //    {
-        //        existingBook.Title = volume.GetProperty("title").GetString() ?? existingBook.Title;
-        //        existingBook.Author = volume.TryGetProperty("authors", out var authors) &&
-        //                              authors.ValueKind == JsonValueKind.Array && authors.GetArrayLength() > 0
-        //            ? string.Join(", ", authors.EnumerateArray().Select(a => a.GetString()))
-        //            : existingBook.Author;
-        //        existingBook.Publisher = volume.TryGetProperty("publisher", out var publisher)
-        //            ? publisher.GetString()
-        //            : existingBook.Publisher;
-        //        existingBook.Summary = volume.TryGetProperty("description", out var desc)
-        //            ? desc.GetString()
-        //            : existingBook.Summary;
-        //        existingBook.CoverUrl = fullCoverUrl ?? existingBook.CoverUrl;
-        //        existingBook.ThumbnailUrl = thumbnailCoverUrl ?? existingBook.ThumbnailUrl;
-
-        //        existingBook.PageCount = volume.TryGetProperty("pageCount", out var pages)
-        //            ? pages.GetInt32()
-        //            : existingBook.PageCount;
-        //        existingBook.Genre = volume.TryGetProperty("categories", out var categories)
-        //            ? string.Join(", ", categories.EnumerateArray().Select(c => c.GetString()))
-        //            : existingBook.Genre;
-        //        existingBook.PublicationDate = volume.TryGetProperty("publishedDate", out var date) &&
-        //                                       DateTime.TryParse(date.GetString(), out var pubDate)
-        //            ? pubDate.ToUniversalTime()
-        //            : existingBook.PublicationDate;
-        //        existingBook.Language = volume.TryGetProperty("language", out var lang)
-        //            ? lang.GetString()
-        //            : existingBook.Language;
-        //        existingBook.Country = accessInfo.TryGetProperty("country", out var country)
-        //            ? country.GetString()
-        //            : existingBook.Country;
-
-        //        await _bookRepository.UpdateAsync(existingBook);
-
-        //        return Ok(new
-        //        {
-        //            message = $"📘 El libro con ISBN {request.ISBN} ya existía y se ha actualizado.",
-        //            book = existingBook
-        //        });
-        //    }
-        //    else
-        //    {
-        //        var newBook = new Book
-        //        {
-        //            Id = Guid.NewGuid(),
-        //            UserId = userId,
-        //            Title = volume.GetProperty("title").GetString() ?? "Sin título",
-        //            Author = volume.TryGetProperty("authors", out var authors) &&
-        //                     authors.ValueKind == JsonValueKind.Array && authors.GetArrayLength() > 0
-        //                ? string.Join(", ", authors.EnumerateArray().Select(a => a.GetString()))
-        //                : "Desconocido",
-        //            ISBN = cleanIsbn,
-        //            Publisher = volume.TryGetProperty("publisher", out var publisher) ? publisher.GetString() : null,
-        //            Summary = volume.TryGetProperty("description", out var desc) ? desc.GetString() : null,
-        //            CoverUrl = fullCoverUrl,
-        //            ThumbnailUrl = thumbnailCoverUrl,
-        //            PageCount = volume.TryGetProperty("pageCount", out var pages) ? pages.GetInt32() : (int?)null,
-        //            Genre = volume.TryGetProperty("categories", out var categories)
-        //                ? string.Join(", ", categories.EnumerateArray().Select(c => c.GetString()))
-        //                : null,
-        //            PublicationDate = volume.TryGetProperty("publishedDate", out var date) &&
-        //                              DateTime.TryParse(date.GetString(), out var pubDate)
-        //                ? pubDate.ToUniversalTime()
-        //                : (DateTime?)null,
-        //            Status = ReadingStatus.NotRead,
-        //            AddedDate = DateTime.UtcNow,
-        //            Language = volume.TryGetProperty("language", out var lang) ? lang.GetString() : null,
-        //            Country = accessInfo.TryGetProperty("country", out var country) ? country.GetString() : null
-        //        };
-
-        //        await _bookRepository.AddAsync(newBook);
-
-        //        return CreatedAtAction(nameof(GetById), new { id = newBook.Id }, newBook);
-        //    }
-        //}
         [HttpPost("import-from-google")]
         [Authorize]
         public async Task<IActionResult> ImportBookFromGoogle([FromBody] ImportBookFromGoogleRequest request)
         {
-            if (string.IsNullOrWhiteSpace(request.ISBN))
-                return BadRequest("El ISBN es obligatorio.");
-
-            var cleanIsbn = request.ISBN.Replace("-", "").Replace(" ", "");
-            if (cleanIsbn.Length != 10 && cleanIsbn.Length != 13)
-                return BadRequest("El ISBN debe tener 10 o 13 dígitos.");
-
-            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier) ?? User.FindFirst("sub") ?? User.FindFirst("id");
-            if (userIdClaim == null || !Guid.TryParse(userIdClaim.Value, out var userId))
-                return Unauthorized("No se pudo determinar el ID del usuario autenticado.");
-
-            // Primera búsqueda por ISBN
-            var resultJson = await _googleBooksService.SearchAsync($"isbn:{cleanIsbn}");
-            _logger.LogInformation("📚 JSON recibido de Google Books para ISBN {ISBN}: {Json}", cleanIsbn, resultJson);
-
-            var result = JsonDocument.Parse(resultJson);
-
-            if (!result.RootElement.TryGetProperty("items", out var items) || items.GetArrayLength() == 0)
-                return NotFound($"No se encontró ningún libro con ISBN {request.ISBN}.");
-
-            JsonElement? selectedItem = null;
-
-            // Escogemos el primer item con thumbnail si existe
-            foreach (var item in items.EnumerateArray())
+            try
             {
-                if (item.TryGetProperty("volumeInfo", out var vi) &&
-                    vi.TryGetProperty("imageLinks", out var imgLinks) &&
-                    imgLinks.TryGetProperty("thumbnail", out _))
+                _logger.LogInformation("Importando libro con ISBN: {isbn}", request.ISBN);
+
+                // ✅ Validar ISBN
+                if (string.IsNullOrWhiteSpace(request.ISBN))
+                    return BadRequest("El ISBN es obligatorio.");
+
+                var cleanIsbn = request.ISBN.Replace("-", "").Replace(" ", "");
+                if (cleanIsbn.Length != 10 && cleanIsbn.Length != 13)
+                    return BadRequest("El ISBN debe tener 10 o 13 dígitos.");
+
+                // ✅ Obtener UserId del JWT
+                var userId = User.GetUserId();
+                if (userId == Guid.Empty)
+                    return Unauthorized("No se pudo determinar el ID del usuario autenticado.");
+
+                // 🔍 Buscar primero en Google Books
+                var googleBook = await _googleBooksService.SearchByIsbnAsync(cleanIsbn);
+
+                // 🔍 Si Google no tiene o tiene datos incompletos, consulta OpenLibrary
+                BookDto? openLibraryBook = null;
+                if (googleBook == null || HasMissingFields(googleBook))
                 {
-                    selectedItem = item;
-                    break;
+                    openLibraryBook = await _openLibraryService.GetByIsbnAsync(cleanIsbn);
                 }
-            }
-            selectedItem ??= items[0];
 
-            var volume = selectedItem.Value.GetProperty("volumeInfo");
+                // 🔀 Merge
+                var merged = BookDataMerger.Merge(googleBook, openLibraryBook, _logger);
+                merged.ISBN = cleanIsbn;
+                merged.UserId = userId;
 
-            // Extraemos datos principales para validar
-            string? title = volume.TryGetProperty("title", out var titleProp) ? titleProp.GetString() : null;
-            string? author = (volume.TryGetProperty("authors", out var authors) &&
-                              authors.ValueKind == JsonValueKind.Array &&
-                              authors.GetArrayLength() > 0)
-                ? string.Join(", ", authors.EnumerateArray().Select(a => a.GetString()))
-                : null;
+                //_logger.LogInformation("🔍 Resultado del merge: {@merged}", merged);
 
-            // Si no hay portada o autor, intentamos buscar por título + autor para completar datos
-            bool missingImportantData = false;
-
-            if (author == null ||
-                !(volume.TryGetProperty("imageLinks", out var imageLinks) && imageLinks.TryGetProperty("thumbnail", out var thumbnailProp)))
-            {
-                missingImportantData = true;
-            }
-
-            if (missingImportantData && !string.IsNullOrWhiteSpace(title) && !string.IsNullOrWhiteSpace(author))
-            {
-                var query = $"{title} {author}";
-                _logger.LogInformation("🔄 Faltan datos, buscando con título y autor: {Query}", query);
-                var secondaryResultJson = await _googleBooksService.SearchAsync(query);
-                var secondaryResult = JsonDocument.Parse(secondaryResultJson);
-
-                if (secondaryResult.RootElement.TryGetProperty("items", out var secondaryItems) && secondaryItems.GetArrayLength() > 0)
-                {
-                    // Tomamos el primer resultado relevante con portada
-                    foreach (var item in secondaryItems.EnumerateArray())
-                    {
-                        if (item.TryGetProperty("volumeInfo", out var vi) &&
-                            vi.TryGetProperty("imageLinks", out var imgLinks) &&
-                            imgLinks.TryGetProperty("thumbnail", out _))
-                        {
-                            selectedItem = item;
-                            volume = selectedItem.Value.GetProperty("volumeInfo");
-                            _logger.LogInformation("volumeInfo: {volume}", volume);
-                            break;
-                        }
-                    }
-                }
-            }
-
-            var accessInfo = selectedItem.Value.GetProperty("accessInfo");
-
-            // Descarga y guarda imagenes
-            string? fullCoverUrl = null;
-            string? thumbnailCoverUrl = null;
-            if (volume.TryGetProperty("imageLinks", out imageLinks) &&
-                imageLinks.TryGetProperty("thumbnail", out var thumbnail))
-            {
-                var thumbnailUrl = thumbnail.GetString();
-                if (!string.IsNullOrWhiteSpace(thumbnailUrl))
+                // 📸 Descargar portada
+                if (!string.IsNullOrWhiteSpace(merged.CoverUrl))
                 {
                     try
                     {
-                        (fullCoverUrl, thumbnailCoverUrl) = await _imageService.DownloadAndSaveCoverAsync(thumbnailUrl, cleanIsbn);
+                        (merged.CoverUrl, merged.ThumbnailUrl) = await _imageService.DownloadAndSaveCoverAsync(merged.CoverUrl, cleanIsbn);
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning("Error al descargar o guardar la imagen de portada: {Message}", ex.Message);
+                        _logger.LogWarning("⚠️ Error al descargar imagen: {Message}", ex.Message);
                     }
                 }
-            }
 
-            var existingBook = await _bookRepository.GetByIsbnAndUserIdAsync(cleanIsbn, userId);
+                // 🔎 Verificar si ya existe el libro
+                var existingBook = await _bookRepository.GetByIsbnAndUserIdAsync(cleanIsbn, userId);
 
-            if (existingBook != null)
-            {
-                // Actualiza campos
-                existingBook.Title = volume.GetProperty("title").GetString() ?? existingBook.Title;
-                existingBook.Author = volume.TryGetProperty("authors", out var miauthors) &&
-                                      miauthors.ValueKind == JsonValueKind.Array && miauthors.GetArrayLength() > 0
-                    ? string.Join(", ", miauthors.EnumerateArray().Select(a => a.GetString()))
-                    : existingBook.Author;
-                existingBook.Publisher = volume.TryGetProperty("publisher", out var publisher)
-                    ? publisher.GetString()
-                    : existingBook.Publisher;
-                existingBook.Summary = volume.TryGetProperty("description", out var desc)
-                    ? desc.GetString()
-                    : existingBook.Summary;
-                existingBook.CoverUrl = fullCoverUrl ?? existingBook.CoverUrl;
-                existingBook.ThumbnailUrl = thumbnailCoverUrl ?? existingBook.ThumbnailUrl;
-
-                existingBook.PageCount = volume.TryGetProperty("pageCount", out var pages)
-                    ? pages.GetInt32()
-                    : existingBook.PageCount;
-                existingBook.Genre = volume.TryGetProperty("categories", out var categories)
-                    ? string.Join(", ", categories.EnumerateArray().Select(c => c.GetString()))
-                    : existingBook.Genre;
-                existingBook.PublicationDate = volume.TryGetProperty("publishedDate", out var date) &&
-                                               DateTime.TryParse(date.GetString(), out var pubDate)
-                    ? pubDate.ToUniversalTime()
-                    : existingBook.PublicationDate;
-                existingBook.Language = volume.TryGetProperty("language", out var lang)
-                    ? lang.GetString()
-                    : existingBook.Language;
-                existingBook.Country = accessInfo.TryGetProperty("country", out var country)
-                    ? country.GetString()
-                    : existingBook.Country;
-
-                await _bookRepository.UpdateAsync(existingBook);
-
-                return Ok(new
+                if (existingBook != null)
                 {
-                    message = $"📘 El libro con ISBN {request.ISBN} ya existía y se ha actualizado.",
-                    book = existingBook
-                });
-            }
-            else
-            {
-                var newBook = new Book
-                {
-                    Id = Guid.NewGuid(),
-                    UserId = userId,
-                    Title = volume.GetProperty("title").GetString() ?? "Sin título",
-                    Author = volume.TryGetProperty("authors", out var miauthors) &&
-                             miauthors.ValueKind == JsonValueKind.Array && miauthors.GetArrayLength() > 0
-                        ? string.Join(", ", authors.EnumerateArray().Select(a => a.GetString()))
-                        : "Desconocido",
-                    ISBN = cleanIsbn,
-                    Publisher = volume.TryGetProperty("publisher", out var publisher) ? publisher.GetString() : null,
-                    Summary = volume.TryGetProperty("description", out var desc) ? desc.GetString() : null,
-                    CoverUrl = fullCoverUrl,
-                    ThumbnailUrl = thumbnailCoverUrl,
-                    PageCount = volume.TryGetProperty("pageCount", out var pages) ? pages.GetInt32() : (int?)null,
-                    Genre = volume.TryGetProperty("categories", out var categories)
-                        ? string.Join(", ", categories.EnumerateArray().Select(c => c.GetString()))
-                        : null,
-                    PublicationDate = volume.TryGetProperty("publishedDate", out var date) &&
-                                      DateTime.TryParse(date.GetString(), out var pubDate)
-                        ? pubDate.ToUniversalTime()
-                        : (DateTime?)null,
-                    Status = ReadingStatus.NotRead,
-                    AddedDate = DateTime.UtcNow,
-                    Language = volume.TryGetProperty("language", out var lang) ? lang.GetString() : null,
-                    Country = accessInfo.TryGetProperty("country", out var country) ? country.GetString() : null
-                };
+                    var updatedBook = MapBookDtoToBook(merged, existingBook);
+                    await _bookRepository.UpdateAsync(updatedBook);
 
+//                    _logger.LogInformation("✅ Libro actualizado: {@book}", updatedBook);
+
+                    return Ok(new
+                    {
+                        message = $"📘 El libro con ISBN {request.ISBN} ya existía y se ha actualizado.",
+                        book = updatedBook
+                    });
+                }
+
+                // ➕ Si no existe, lo creamos
+                //_logger.LogInformation("🚀 DTO final antes de mapear a Book: {@MergedBookDto}", merged);
+
+                var newBook = MapBookDtoToBook(merged);
                 await _bookRepository.AddAsync(newBook);
+
+//                _logger.LogInformation("✅ Nuevo libro añadido: {@book}", newBook);
 
                 return CreatedAtAction(nameof(GetById), new { id = newBook.Id }, newBook);
             }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "💥 Error inesperado al importar libro.");
+                return StatusCode(500, "Error interno del servidor al importar el libro.");
+            }
         }
+
+        private bool HasMissingFields(BookDto book)
+        {
+            return string.IsNullOrWhiteSpace(book.Author)
+                || string.IsNullOrWhiteSpace(book.Title)
+                || string.IsNullOrWhiteSpace(book.Summary)
+                || string.IsNullOrWhiteSpace(book.Publisher)
+                || string.IsNullOrWhiteSpace(book.Genre)
+                || string.IsNullOrWhiteSpace(book.CoverUrl)
+                || !book.PageCount.HasValue
+                || !book.PublicationDate.HasValue;
+        }
+
+
+        private Book MapBookDtoToBook(BookDto dto, Book? existingBook = null)
+        {
+            var book = existingBook ?? new Book
+            {
+                Id = Guid.NewGuid(),
+                AddedDate = DateTime.UtcNow,
+                UserId = dto.UserId ?? throw new ArgumentException("UserId no puede ser nulo.")
+            };
+
+            // Texto
+            book.Title = string.IsNullOrWhiteSpace(dto.Title) ? "Sin titulo" : dto.Title;
+            book.Author = string.IsNullOrWhiteSpace(dto.Author) ? "Sin autor" : dto.Author;
+            book.Series = dto.Series;
+            book.ISBN = dto.ISBN;
+            book.Publisher = dto.Publisher;
+            book.Genre = dto.Genre;
+            book.Summary = dto.Summary;
+            book.Language = dto.Language;
+            book.Country = dto.Country;
+            book.LentTo = dto.LentTo;
+
+            // Imagenes blindadas
+            book.CoverUrl = dto.CoverUrl ?? book.CoverUrl ?? "/covers/default.jpg";
+            book.ThumbnailUrl = dto.ThumbnailUrl ?? book.ThumbnailUrl ?? "/covers/default_thumb.jpg";
+
+            // Números y fechas
+            book.PublicationDate = dto.PublicationDate;
+            book.PageCount = dto.PageCount;
+            book.StartReadingDate = dto.StartReadingDate;
+            book.EndReadingDate = dto.EndReadingDate;
+
+            // Estado siempre actualizable
+            book.Status = dto.Status;
+
+//            _logger.LogInformation("📝 Book final mapeado: {@Book}", book);
+
+            return book;
+        }
+
+
+
+
+
+
+
+
 
 
         private JsonElement? SelectBestItemWithThumbnail(JsonElement items)
@@ -505,9 +337,9 @@ namespace UserLibraryBackEndApi.Controllers
         }
 
         public class ImportBookFromGoogleRequest
-    {
-        public string ISBN { get; set; } = string.Empty;
-    }
+        {
+            public string ISBN { get; set; } = string.Empty;
+        }
 
         [HttpPost("upload-cover")]
         public async Task<IActionResult> UploadCover([FromBody] UploadCoverRequest request, [FromServices] IImageService imageService)
@@ -515,13 +347,27 @@ namespace UserLibraryBackEndApi.Controllers
             if (string.IsNullOrWhiteSpace(request.ImageUrl) || string.IsNullOrWhiteSpace(request.Isbn))
                 return BadRequest("Faltan datos.");
 
-            var (fullPath, thumbnailPath) = await imageService.DownloadAndSaveCoverAsync(request.ImageUrl, request.Isbn);
+            (string? fullPath, string? thumbnailPath)? result;
 
-            if (string.IsNullOrEmpty(fullPath))
-                return StatusCode(500, "No se pudo guardar la imagen.");
+            if (request.ImageUrl.StartsWith("data:image/")) // base64
+            {
+                result = await imageService.SaveBase64ImageAsync(request.ImageUrl, request.Isbn);
+            }
+            else // imagen desde URL
+            {
+                result = await imageService.DownloadAndSaveCoverAsync(request.ImageUrl, request.Isbn);
+            }
 
-            // Devuelve la ruta relativa para guardar en la base de datos
-            return Ok(new { relativePath = fullPath, thumbnailPath });
+            if (result is { fullPath: not null })
+            {
+                return Ok(new
+                {
+                    relativePath = result.Value.fullPath,
+                    thumbnailPath = result.Value.thumbnailPath
+                });
+            }
+
+            return StatusCode(500, "No se pudo guardar la imagen.");
         }
 
         // Clase para recibir la petición
@@ -576,9 +422,68 @@ namespace UserLibraryBackEndApi.Controllers
             var books = await _bookRepository.GetBooksByUserIdAsync(userId);
             return Ok(_mapper.Map<IEnumerable<BookDto>>(books));
         }
+       
+
+        private BookDto? TryExtractBestGoogleItem(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return null;
+            var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("items", out var items) || items.GetArrayLength() == 0)
+                return null;
+
+            var item = items.EnumerateArray().FirstOrDefault();
+            if (!item.TryGetProperty("volumeInfo", out var vi)) return null;
+
+            return new BookDto
+            {
+                Title = vi.TryGetProperty("title", out var title) ? title.GetString() : null,
+                Author = vi.TryGetProperty("authors", out var authors) && authors.ValueKind == JsonValueKind.Array
+                    ? string.Join(", ", authors.EnumerateArray().Select(a => a.GetString()))
+                    : null,
+                Publisher = vi.TryGetProperty("publisher", out var publisher) ? publisher.GetString() : null,
+                Summary = vi.TryGetProperty("description", out var desc) ? desc.GetString() : null,
+                PageCount = vi.TryGetProperty("pageCount", out var pages) ? pages.GetInt32() : (int?)null,
+                Genre = vi.TryGetProperty("categories", out var cats) && cats.ValueKind == JsonValueKind.Array
+                    ? string.Join(", ", cats.EnumerateArray().Select(c => c.GetString()))
+                    : null,
+                PublicationDate = vi.TryGetProperty("publishedDate", out var date) &&
+                                  DateTime.TryParse(date.GetString(), out var pubDate)
+                    ? pubDate.ToUniversalTime()
+                    : null,
+                Language = vi.TryGetProperty("language", out var lang) ? lang.GetString() : null,
+                ThumbnailUrl = vi.TryGetProperty("imageLinks", out var images) &&
+                               images.TryGetProperty("thumbnail", out var thumb)
+                    ? thumb.GetString()
+                    : null,
+                Country = item.TryGetProperty("accessInfo", out var access) &&
+                          access.TryGetProperty("country", out var country)
+                    ? country.GetString()
+                    : null
+            };
+        }
 
     }
+    public static class JsonExtensions
+    {
+        public static JsonElement? GetPropertyOrNull(this JsonElement element, string propertyName)
+        {
+            return element.TryGetProperty(propertyName, out var value) ? value : (JsonElement?)null;
+        }
+
+        public static string? GetStringArrayAsString(this JsonElement? element)
+        {
+            return element.HasValue && element.Value.ValueKind == JsonValueKind.Array
+                ? string.Join(", ", element.Value.EnumerateArray().Select(x => x.GetString()))
+                : null;
+        }
+
+        public static DateTime? TryParseDateTimeUtc(this JsonElement? element)
+        {
+            if (element.HasValue && DateTime.TryParse(element.Value.GetString(), out var dt))
+                return dt.ToUniversalTime();
+            return null;
+        }
+
+    }
+
 }
-
-
-

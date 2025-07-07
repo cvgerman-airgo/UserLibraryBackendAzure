@@ -31,54 +31,83 @@ namespace Infrastructure.Services
         {
             _logger.LogInformation("🟡 Intentando autenticar al usuario: {Email}", email);
 
-            var user = await _userRepository.GetByEmailAsync(email);
-
-            if (user == null)
+            try
             {
-                _logger.LogWarning("🔴 Autenticación fallida: usuario no encontrado - {Email}", email);
-                return null;
+                var user = await _userRepository.GetByEmailAsync(email);
+
+                if (user == null)
+                {
+                    _logger.LogWarning("🔴 Autenticación fallida: usuario no encontrado - {Email}", email);
+                    return null;
+                }
+
+                if (!VerifyPassword(password, user.PasswordHash))
+                {
+                    _logger.LogWarning("🔴 Autenticación fallida: contraseña incorrecta - {Email}", email);
+                    return null;
+                }
+
+                if (!user.EmailConfirmed)
+                {
+                    _logger.LogWarning("Login fallido: Email no verificado para {Email}", email);
+                    return null;
+                }
+
+                // Validar configuración JWT
+                var jwtKey = _configuration["Jwt:Key"];
+                var jwtIssuer = _configuration["Jwt:Issuer"];
+                var jwtAudience = _configuration["Jwt:Audience"];
+
+                if (string.IsNullOrEmpty(jwtKey) || string.IsNullOrEmpty(jwtIssuer) || string.IsNullOrEmpty(jwtAudience))
+                {
+                    _logger.LogError("Configuración JWT inválida. Key, Issuer o Audience están vacíos.");
+                    throw new InvalidOperationException("Configuración JWT inválida");
+                }
+
+                // Validar datos usuario importantes para token
+                if (user.Id == Guid.Empty || string.IsNullOrEmpty(user.Email) || string.IsNullOrEmpty(user.Role))
+                {
+                    _logger.LogError("Datos del usuario incompletos para crear token (Id, Email, Role).");
+                    throw new InvalidOperationException("Datos del usuario incompletos");
+                }
+
+                _logger.LogInformation("🟢 Autenticación correcta para {Email}", email);
+
+                var claims = new[]
+                {
+            new Claim(ClaimTypes.Name, user.Email),
+            new Claim(ClaimTypes.Role, user.Role),
+            new Claim(ClaimTypes.NameIdentifier, user.Id.ToString())
+        };
+
+                var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
+
+                var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+                var token = new JwtSecurityToken(
+                    issuer: jwtIssuer,
+                    audience: jwtAudience,
+                    claims: claims,
+                    expires: DateTime.UtcNow.AddHours(2),
+                    signingCredentials: creds);
+
+                return new JwtSecurityTokenHandler().WriteToken(token);
             }
-
-            if (!VerifyPassword(password, user.PasswordHash))
+            catch (Exception ex)
             {
-                _logger.LogWarning("🔴 Autenticación fallida: contraseña incorrecta - {Email}", email);
-                return null;
+                _logger.LogError(ex, "Error inesperado en AuthenticateAsync para el usuario {Email}", email);
+                throw; // Re-lanzar para que el controlador lo capture y devuelva 500
             }
-
-            if (!user.EmailConfirmed)
-            {
-                _logger.LogWarning("Login fallido: Email no verificado para {Email}", email);
-                return null;
-            }
-            _logger.LogInformation("🟢 Autenticación correcta para {Email}", email);
-            var claims = new[]
-            {
-                new Claim(ClaimTypes.Name, user.Email),
-                new Claim(ClaimTypes.Role, user.Role),
-                new Claim(ClaimTypes.NameIdentifier, user.Id.ToString())
-            };
-            var key = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]!));
-
-            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
-            var token = new JwtSecurityToken(
-                issuer: _configuration["Jwt:Issuer"],
-                audience: _configuration["Jwt:Audience"],
-                claims: claims,
-                expires: DateTime.UtcNow.AddHours(2),
-                signingCredentials: creds);
-
-            return new JwtSecurityTokenHandler().WriteToken(token);
         }
+
+        public bool VerifyPassword(string password, string passwordHash)
+        {
+            return BCrypt.Net.BCrypt.Verify(password, passwordHash);
+        }
+
         public string HashPassword(string password)
         {
-            // El segundo parámetro es el "work factor" (coste). 10 es seguro y rápido para la mayoría de los casos.
-            return BCrypt.Net.BCrypt.HashPassword(password, workFactor: 10);
-        }
-        public bool VerifyPassword(string password, string hash)
-        {
-            return BCrypt.Net.BCrypt.Verify(password, hash);
+            return BCrypt.Net.BCrypt.HashPassword(password);
         }
     }
 }

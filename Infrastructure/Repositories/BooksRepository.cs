@@ -38,9 +38,18 @@ namespace Infrastructure.Repositories
 
         public async Task UpdateAsync(Book book)
         {
-            _context.Books.Update(book);
+            var existing = await _context.Books.FindAsync(book.Id);
+            if (existing is null)
+            {
+                throw new InvalidOperationException($"No se encontró el libro con Id {book.Id}");
+            }
+
+            // Actualiza todas las propiedades excepto la clave primaria
+            _context.Entry(existing).CurrentValues.SetValues(book);
+
             await _context.SaveChangesAsync();
         }
+
 
         public async Task DeleteAsync(Book book)
         {

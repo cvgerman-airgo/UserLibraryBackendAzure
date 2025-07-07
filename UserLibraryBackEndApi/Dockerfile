@@ -12,6 +12,9 @@ COPY Application ./Application
 COPY Infrastructure ./Infrastructure
 COPY Domain ./Domain
 COPY UserLibraryBackEndApi ./UserLibraryBackEndApi
+COPY ./UserLibraryBackEndApi/covers /app/covers
+
+COPY ./UserLibraryBackEndApi/wwwroot /app/wwwroot
 
 WORKDIR /src/UserLibraryBackEndApi
 RUN dotnet publish -c Release -o /app/publish

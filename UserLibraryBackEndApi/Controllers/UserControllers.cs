@@ -20,19 +20,22 @@ public class UsersController : ControllerBase
     private readonly ILogger<UsersController> _logger;
     private readonly IRedisService _redisService;
     private readonly IEmailService _emailService;
+    private readonly IConfiguration _configuration;
 
     public UsersController(
         IUserRepository userRepository, 
         IAuthService authService,
         ILogger<UsersController> logger,
         IRedisService redisService,
-        IEmailService emailService)
+        IEmailService emailService,
+        IConfiguration configuration)
     {
         _userRepository = userRepository;
         _authService = authService;
         _logger = logger;
         _redisService = redisService;
         _emailService = emailService;
+        _configuration = configuration;
     }
     //[HttpPost("init-admin")]
     //[AllowAnonymous]
@@ -234,16 +237,24 @@ public class UsersController : ControllerBase
     {
         _logger.LogInformation("Intento de login para {Email}", request.Email);
 
-        var token = await _authService.AuthenticateAsync(request.Email, request.Password);
-
-        if (token == null)
+        try
         {
-            _logger.LogWarning("Login fallido para {Email}", request.Email);
-            return Unauthorized("Email o contraseña incorrectos.");
-        }
+            var token = await _authService.AuthenticateAsync(request.Email, request.Password);
 
-        _logger.LogInformation("Login correcto para {Email}", request.Email);
-        return Ok(new { token });
+            if (token == null)
+            {
+                _logger.LogWarning("Login fallido para {Email}", request.Email);
+                return Unauthorized("Email o contraseña incorrectos.");
+            }
+
+            _logger.LogInformation("Login correcto para {Email}", request.Email);
+            return Ok(new { token });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error inesperado al intentar hacer login para {Email}", request.Email);
+            return StatusCode(500, "Error interno del servidor.");
+        }
     }
 
     // POST: api/users/forgot-password
@@ -264,20 +275,38 @@ public class UsersController : ControllerBase
         if (user == null)
         {
             _logger.LogWarning("Solicitud de restablecimiento: Email no encontrado: {Email}", request.Email);
-            return Ok("Si el email existe, se ha enviado un enlace para restablecer la contraseña.");
+            return Ok("Si el email {Email} existe, se ha enviado un enlace para restablecer la contraseña.");
         }
-
+        try
+        {
+            Console.WriteLine(" 279 Enviando email a: " + user.Email);
         var token = Guid.NewGuid().ToString();
         var key = $"reset:{token}";
         await _redisService.SetTokenAsync(key, user.Id.ToString(), TimeSpan.FromMinutes(15));
+            Console.WriteLine(" 283 Enviando email a: " + user.Email);
+            var baseUrl = _configuration["Frontend:BaseUrl"];
+            var resetLink = $"{baseUrl}/reset-password?token={token}";
+            _logger.LogInformation("Token generado: {Token}", token);
+        _logger.LogInformation("Enlace de recuperación: {ResetLink}", resetLink);
 
-        var resetLink = $"https://tusitio.com/reset-password?token={token}";
-        _logger.LogInformation("Token de restablecimiento generado para {Email}: {Token}", user.Email, token);
-        _logger.LogInformation("Enlace: {ResetLink}", resetLink);
-        // Aquí luego iría el envío de email real
+            Console.WriteLine(" 288 Enviando email a: " + user.Email);
+            Console.WriteLine("📧 Enviando email a: " + user.Email);
+            await _emailService.SendAsync(
+                user.Email,
+                "Restablece tu contraseña",
+                $"Haz clic aquí para cambiar tu contraseña: <a href='{resetLink}'>{resetLink}</a>"
+            );
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("❌ Error al enviar el correo: " + ex.Message);
+            _logger.LogError(ex, "Error enviando correo a {Email}", user.Email);
+            // No devuelvas el error al usuario, mantén el mismo mensaje para no filtrar información
+        }
 
-        return Ok("Si el email existe, se ha enviado un enlace para restablecer la contraseña.");
+        return Ok("303 Si el email existe, se ha enviado un enlace para restablecer la contraseña.");
     }
+
 
     // POST: api/users/reset-password
     // Este endpoint se usa para restablecer la contraseña
@@ -312,7 +341,7 @@ public class UsersController : ControllerBase
         var user = await _userRepository.GetByIdAsync(userId);
         if (user == null) return NotFound();
 
-        user.PasswordHash = _authService.HashPassword(request.NewPassword);
+        user.PasswordHash = _authService.HashPassword(request.Password);
         await _userRepository.UpdateAsync(user);
         await _redisService.DeleteTokenAsync(key);
 
@@ -335,7 +364,12 @@ public class UsersController : ControllerBase
 
         await _redisService.SetAsync(key, user.Id.ToString(), TimeSpan.FromHours(1));
 
-        var verificationLink = $"{Request.Scheme}://{Request.Host}/api/users/verify-email?token={token}";
+        // Dirección real de tu frontend React
+        // Dirección real de tu frontend React
+        var backendUrl = _configuration["Frontend:BaseUrl"];
+        var verificationLink = $"{backendUrl}/verify-email?token={token}";
+
+
         await _emailService.SendAsync(user.Email, "Verifica tu email", $"Haz clic aquí para verificar tu email: {verificationLink}");
 
         _logger.LogInformation("Token de verificación enviado a {Email}", user.Email);
@@ -413,7 +447,10 @@ public class UsersController : ControllerBase
         var key = $"email-verification:{token}";
         await _redisService.SetAsync(key, user.Id.ToString(), TimeSpan.FromHours(1));
 
-        var verificationLink = $"{Request.Scheme}://{Request.Host}/api/users/verify-email?token={token}";
+        // Dirección real de tu frontend React
+        var backendUrl = _configuration["Frontend:BaseUrl"];
+        var verificationLink = $"{backendUrl}/verify-email?token={token}";
+
         await _emailService.SendAsync(user.Email, "Verifica tu email", $"Haz clic aquí para verificar tu email: {verificationLink}");
 
         return CreatedAtAction(nameof(GetUser), new { id = user.Id }, new { user.Id });

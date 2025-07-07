@@ -12,13 +12,22 @@ using StackExchange.Redis;
 using Application.Mapping;
 using Infrastructure;
 using Microsoft.Extensions.FileProviders;
+using System.IO;
+using System.Linq;
 
 var builder = WebApplication.CreateBuilder(args);
-
+var env = builder.Environment;
 var isMigration = args.Contains("--is-migration");
 
+builder.Configuration
+    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+    .AddEnvironmentVariables();
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-Console.WriteLine($"🧠 Usando cadena de conexión: {connectionString}");
+// Console.WriteLine($"🧠 Usando cadena de conexión: {connectionString}");
+// Console.WriteLine("🌍 ASPNETCORE_ENVIRONMENT: " + env.EnvironmentName);
+
+builder.Services.AddHttpClient<IGoogleBooksService, GoogleBooksService>();
+
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
@@ -59,6 +68,12 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
+var jwtKey = builder.Configuration["Jwt:Key"];
+if (string.IsNullOrEmpty(jwtKey))
+{
+    throw new Exception("JWT Key no está configurada en las variables de entorno o appsettings");
+}
+
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -95,7 +110,7 @@ builder.Services.AddAuthentication(options =>
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     .Enrich.FromLogContext()
-    .WriteTo.Console()
+     .WriteTo.Console(outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss} [{Level}] {SourceContext} - {Message}{NewLine}")
     .CreateLogger();
 
 builder.Host.UseSerilog(); // << IMPORTANTE
@@ -104,7 +119,8 @@ builder.Host.UseSerilog(); // << IMPORTANTE
 
 if (!isMigration)
 {
-    var redisConnectionString = builder.Configuration.GetSection("ConnectionRedisStrings")["Redis"];
+    var redisConnectionString = builder.Configuration["Redis:Connection"];
+
     if (string.IsNullOrEmpty(redisConnectionString))
         throw new InvalidOperationException("La cadena de conexión de Redis no está configurada.");
 
@@ -132,24 +148,24 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddInfrastructure(builder.Configuration);
 
-builder.Services.AddAutoMapper(typeof(BookProfile));
+builder.Services.AddAutoMapper(typeof(BookProfile).Assembly);
 
 builder.Services.AddScoped<IBooksRepository, BooksRepository>();
 
 builder.Services.AddHttpClient<GoogleBooksService>();
+
+builder.Services.AddHttpClient<IOpenLibraryService, OpenLibraryService>();
+builder.Services.AddHttpClient<IImageService, ImageService>();
+
+//Con eso limpias duplicados en el log
+
+
+//builder.Logging.ClearProviders();
+//builder.Logging.AddConsole();
+
 var app = builder.Build();
 
-app.UseStaticFiles();   // Necesario para servir /covers/*.jpg
-
-//  Lo añado por cambio de entorno
-// al crear el frontend en un docker
-app.UseStaticFiles(new StaticFileOptions
-{
-    FileProvider = new PhysicalFileProvider(
-        Path.Combine(Directory.GetCurrentDirectory(), "covers")),
-    RequestPath = "/covers"
-});
-
+app.UseStaticFiles();
 
 app.UseRouting();
 // ✅ Middleware de desarrollo: Swagger

@@ -7,7 +7,8 @@ namespace Application.DTOs;
 
 public class BookDto
 {
-    public Guid Id { get; set; }
+    public Guid Id { get; set; }  
+    public Guid? UserId { get; set; } // Se asigna en el backend manualmente si proviene de Google/OpenLibrary
     public string Title { get; set; } = default!;
     public string? Series { get; set; }
     public string? ISBN { get; set; }
@@ -19,6 +20,8 @@ public class BookDto
     public string? Summary { get; set; }
     public DateTime? PublicationDate { get; set; }
     public int? PageCount { get; set; }
+    public string? Country { get; set; } // Código ISO de idioma, por ej. "es", "en"
+    public string? Language { get; set; } // Código ISO de idioma, por ej. "es", "en"
     public DateTime AddedDate { get; set; }
     public DateTime? StartReadingDate { get; set; }
     public DateTime? EndReadingDate { get; set; }
