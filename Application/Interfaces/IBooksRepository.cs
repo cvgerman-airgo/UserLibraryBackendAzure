@@ -1,9 +1,4 @@
 ﻿using Domain.Entities;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Application.Interfaces
 {
@@ -22,5 +17,8 @@ namespace Application.Interfaces
         Task<IEnumerable<Book>> GetBooksByGenreAsync(string genre);
         Task<IEnumerable<Book>> GetBooksByStatusAsync(ReadingStatus status);
         Task<IEnumerable<Book>> GetBooksByUserIdAsync(Guid userId);
+        Task SaveChangesAsync();
+        Task<Book?> GetByUserIdAndIsbnAsync(Guid userId, string isbn);
+        Task<IEnumerable<Book>> GetBooksByPublisherAsync(string publisher);
     }
 }

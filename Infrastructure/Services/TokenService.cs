@@ -38,6 +38,34 @@ namespace Infrastructure.Services
 
             return new JwtSecurityTokenHandler().WriteToken(token);
         }
+
+public DateTime GetTokenExpiration(string token)
+        {
+            var tokenBytes = Encoding.UTF8.GetBytes(token);
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var tokenObject = tokenHandler.ReadJwtToken(token);
+            var expiration = tokenObject.Payload.Expiration;
+
+            if (expiration.HasValue)
+            {
+                return UnixTimeStampToDateTime(expiration.Value);
+            }
+            else
+            {
+                // Maneja el caso en que expiration sea nulo
+                // Por ejemplo, puedes lanzar una excepción o devolver un valor predeterminado
+                throw new InvalidOperationException("La fecha de expiración no se pudo obtener");
+            }
+        }
+
+        private DateTime UnixTimeStampToDateTime(long unixTimeStamp)
+        {
+            var dateTime = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            dateTime = dateTime.AddSeconds(unixTimeStamp);
+
+            return dateTime;
+        }
+
     }
 }
 

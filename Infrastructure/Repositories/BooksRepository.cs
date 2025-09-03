@@ -66,14 +66,6 @@ namespace Infrastructure.Repositories
                     EF.Functions.ILike(b.ISBN!, $"%{searchTerm}%"))
                 .ToListAsync();
         }
-
-        public async Task<IEnumerable<Book>> GetBooksByAuthorAsync(string author)
-        {
-            return await _context.Books
-                .Where(b => EF.Functions.ILike(b.Author!, author))
-                .ToListAsync();
-        }
-
         public async Task<IEnumerable<Book>> GetBooksByGenreAsync(string genre)
         {
             return await _context.Books
@@ -98,5 +90,29 @@ namespace Infrastructure.Repositories
                 .Where(b => b.UserId == userId)
                 .ToListAsync();
         }
+
+        public async Task SaveChangesAsync()
+        {
+            await _context.SaveChangesAsync();
+        }
+        public async Task<Book?> GetByUserIdAndIsbnAsync(Guid userId, string isbn)
+        {
+            return await _context.Books
+                .FirstOrDefaultAsync(b => b.UserId == userId && b.ISBN == isbn);
+        }
+        public async Task<IEnumerable<Book>> GetBooksByPublisherAsync(string publisher)
+        {
+            return await _context.Books
+                .Where(b => EF.Functions.ILike(b.Publisher!, publisher))
+                .ToListAsync();
+        }
+
+        public async Task<IEnumerable<Book>> GetBooksByAuthorAsync(string author)
+        {
+            return await _context.Books
+                .Where(b => EF.Functions.ILike(b.Author!, author))
+                .ToListAsync();
+        }
+
     }
 }

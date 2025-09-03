@@ -84,6 +84,12 @@ namespace Infrastructure.Services
 
                 var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
+                // Generar token
+                // Configuracion del token de autenticación
+                // El token expira en 2 horas
+                // El token es firmado con la clave de encriptación
+                // Se utiliza el algoritmo de firma HmacSha256
+                // se guardara en la base de datos de Redis
                 var token = new JwtSecurityToken(
                     issuer: jwtIssuer,
                     audience: jwtAudience,

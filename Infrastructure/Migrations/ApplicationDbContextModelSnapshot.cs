@@ -8,6 +8,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
+// Esto regenera las migraciones de la base de datos y las ejecuta
+// En el caso de que se eliminen
+//dotnet ef database update --project Infrastructure --startup-project UserLibraryBackEndApi
+
+
 namespace Infrastructure.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]

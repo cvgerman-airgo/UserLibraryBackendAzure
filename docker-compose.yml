@@ -22,7 +22,7 @@ services:
   backend:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: UserLibraryBackEndApi/Dockerfile
     container_name: backend
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
@@ -42,21 +42,14 @@ services:
     restart: unless-stopped
 
   frontend:
-    build:
-      context: ./userlibrary-frontend
-      dockerfile: Dockerfile
     container_name: frontend
-    volumes:
-      - ./userlibrary-frontend:/app
-      - /app/node_modules
+    build:
+      context: .
+      dockerfile: userlibrary-frontend/Dockerfile.prod   # siempre usas el de prod
     ports:
-      - "3000:3000"
-    environment:
-      - CHOKIDAR_USEPOLLING=true
-      - REACT_APP_API_URL=http://backend:80
+      - "3000:80"   # el frontend queda expuesto en http://localhost
     depends_on:
-      - backend
-    restart: unless-stopped
+      - backend   # espera a que el backend esté levantado
 
 volumes:
   postgres_data:

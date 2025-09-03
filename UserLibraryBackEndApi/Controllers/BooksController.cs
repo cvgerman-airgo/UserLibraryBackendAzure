@@ -1,18 +1,21 @@
 ﻿using Application.DTOs;
 using AutoMapper;
 using Domain.Entities;
-using Infrastructure.Repositories;
 using Microsoft.AspNetCore.Mvc;
-using Infrastructure.Services;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using System.Security.Claims;
 using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Processing;
-using SixLabors.ImageSharp.Formats.Png;
 using Application.Interfaces;
 using Application.Helpers;
 using Infrastructure.Estensions;
+using CsvHelper;
+using System.Globalization;
+using Microsoft.EntityFrameworkCore;
+using Infrastructure.Persistence;
+using System.Text;
+using CsvHelper.Configuration;
+using Infrastructure.Repositories;
 
 namespace UserLibraryBackEndApi.Controllers
 {
@@ -26,6 +29,7 @@ namespace UserLibraryBackEndApi.Controllers
         private readonly ILogger<BooksController> _logger;
         private readonly IImageService _imageService;
         private readonly IOpenLibraryService _openLibraryService;
+        private readonly ApplicationDbContext _context;
 
         public BooksController(
             IBooksRepository bookRepository,
@@ -33,7 +37,9 @@ namespace UserLibraryBackEndApi.Controllers
             GoogleBooksService googleBooksService,
             ILogger<BooksController> logger,
             IImageService imageService,
-            IOpenLibraryService openLibraryService)
+            IOpenLibraryService openLibraryService,
+            ApplicationDbContext context)
+            
         {
             _bookRepository = bookRepository;
             _mapper = mapper;
@@ -41,6 +47,206 @@ namespace UserLibraryBackEndApi.Controllers
             _logger = logger;
             _imageService = imageService;
             _openLibraryService = openLibraryService;
+            _context = context;
+        }
+
+        [HttpGet("export")]
+        public async Task<IActionResult> ExportBooksCsv()
+        {
+            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (userId == null)
+                return Unauthorized();
+
+            var books = await _context.Books
+                .Where(b => b.UserId == Guid.Parse(userId))
+                .Select(b => new BookDto
+                {
+                    Id = b.Id,
+                    UserId = b.UserId,
+                    Title = b.Title,
+                    Series = b.Series,
+                    ISBN = b.ISBN,
+                    CoverUrl = b.CoverUrl,
+                    ThumbnailUrl = b.ThumbnailUrl,
+                    Author = b.Author,
+                    Publisher = b.Publisher,
+                    Genre = b.Genre,
+                    Summary = b.Summary,
+                    PublicationDate = b.PublicationDate,
+                    PageCount = b.PageCount,
+                    Country = b.Country,
+                    Language = b.Language,
+                    AddedDate = b.AddedDate,
+                    StartReadingDate = b.StartReadingDate,
+                    EndReadingDate = b.EndReadingDate,
+                    Status = b.Status,
+                    LentTo = b.LentTo
+                })
+                .ToListAsync();
+
+            using var writer = new StringWriter();
+            using (var csv = new CsvWriter(writer, CultureInfo.InvariantCulture))
+            {
+                csv.WriteRecords(books);
+            }
+
+            var csvBytes = System.Text.Encoding.UTF8.GetBytes(writer.ToString());
+            return File(csvBytes, "text/csv", "books.csv");
+        }
+
+
+        [HttpPost("import")]
+        [Authorize]
+        public async Task<IActionResult> ImportBooks(IFormFile file)
+        {
+            if (file == null || file.Length == 0)
+                return BadRequest("No se ha enviado ningún archivo.");
+
+            try
+            {
+                // Obtener ID del usuario autenticado
+                var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(userIdClaim))
+                    return Unauthorized();
+
+                var userId = Guid.Parse(userIdClaim);
+
+                int addedCount = 0;
+                int updatedCount = 0;
+                int skippedCount = 0;
+
+                // Configuración CSV
+                var config = new CsvHelper.Configuration.CsvConfiguration(System.Globalization.CultureInfo.InvariantCulture)
+                {
+                    Delimiter = ";",           // CSV delimitado por punto y coma
+                    HeaderValidated = null,    // Ignora errores si headers no coinciden
+                    MissingFieldFound = null,  // Ignora errores si faltan campos
+                    BadDataFound = null        // Ignora datos malos
+                };
+
+                using var reader = new StreamReader(file.OpenReadStream(), Encoding.UTF8, true);
+                using var csv = new CsvHelper.CsvReader(reader, config);
+
+                // Registrar mapping si usas BookCsvMap
+                csv.Context.RegisterClassMap<BookCsvMap>();
+
+                // Configurar formatos de fecha para todas las columnas DateTime / DateTime?
+                var dateFormats = new[]
+                {
+            "dd/MM/yyyy HH:mm:ss", "MM/dd/yyyy HH:mm:ss", "yyyy-MM-dd HH:mm:ss",
+            "dd/MM/yyyy HH:mm",    "MM/dd/yyyy HH:mm",    "yyyy-MM-dd HH:mm",
+            "dd/MM/yyyy H:mm",     "MM/dd/yyyy H:mm",     "yyyy-MM-dd H:mm",
+            "yyyy-MM-dd",          "MM/dd/yyyy",          "dd/MM/yyyy"
+        };
+                csv.Context.TypeConverterOptionsCache.GetOptions<DateTime?>().Formats = dateFormats;
+                csv.Context.TypeConverterOptionsCache.GetOptions<DateTime>().Formats = dateFormats;
+
+                // Leer todos los registros
+                var records = csv.GetRecords<BookDto>().ToList();
+
+                foreach (var record in records)
+                {
+                    // Validar campos obligatorios
+                    if (string.IsNullOrWhiteSpace(record.Title) || string.IsNullOrWhiteSpace(record.Author))
+                    {
+                        skippedCount++;
+                        continue;
+                    }
+
+                    // Sobrescribir UserId con el del usuario autenticado
+                    record.UserId = userId;
+
+                    // Si AddedDate es vacío, asignar fecha UTC actual
+                    if (record.AddedDate == default)
+                        record.AddedDate = DateTime.UtcNow;
+
+                    // Convertir todas las fechas a UTC
+                    DateTimeHelper.FixDateTimesToUtc(record);
+
+                    // Buscar libro existente
+                    var existingBook = await _bookRepository.GetByUserIdAndIsbnAsync(userId, record.ISBN);
+
+                    if (existingBook != null)
+                    {
+                        // Actualizar libro existente
+                        existingBook.Title = record.Title;
+                        existingBook.Series = record.Series;
+                        existingBook.CoverUrl = record.CoverUrl;
+                        existingBook.ThumbnailUrl = record.ThumbnailUrl;
+                        existingBook.Author = record.Author;
+                        existingBook.Publisher = record.Publisher;
+                        existingBook.Genre = record.Genre;
+                        existingBook.Summary = record.Summary;
+                        existingBook.PublicationDate = record.PublicationDate;
+                        existingBook.PageCount = record.PageCount;
+                        existingBook.Country = record.Country;
+                        existingBook.Language = record.Language;
+                        existingBook.AddedDate = record.AddedDate;
+                        existingBook.StartReadingDate = record.StartReadingDate;
+                        existingBook.EndReadingDate = record.EndReadingDate;
+                        existingBook.Status = record.Status;
+                        existingBook.LentTo = record.LentTo;
+
+                        await _bookRepository.UpdateAsync(existingBook);
+                        updatedCount++;
+                    }
+                    else
+                    {
+                        // Insertar nuevo libro
+                        var bookEntity = _mapper.Map<Book>(record);
+                        await _bookRepository.AddAsync(bookEntity);
+                        addedCount++;
+                    }
+                }
+
+                // Guardar cambios en la base de datos
+                await _bookRepository.SaveChangesAsync();
+
+                // Retornar mensaje bonito y resumido para el frontend
+                return Ok(new
+                {
+                    added = addedCount,
+                    updated = updatedCount,
+                    skipped = skippedCount,
+                    Message = $"Importación completada ✅\n" +
+                              $"Libros añadidos: {addedCount}\n" +
+                              $"Libros actualizados: {updatedCount}\n" +
+                              $"Registros omitidos: {skippedCount}"
+                });
+            }
+            catch (Exception ex)
+            {
+                var inner = ex.InnerException != null ? ex.InnerException.Message : "";
+                return StatusCode(500, $"Error al importar CSV: {ex.Message} - {inner}");
+            }
+        }
+
+        // http://localhost:5000/api/Books/data
+        [HttpGet("data")]
+        [Authorize]  // ✅ así solo usuarios logueados pueden acceder
+        public IActionResult GetToolsData()
+        {
+            var publishers = _context.Books
+                .Where(b => !string.IsNullOrEmpty(b.Publisher))
+                .Select(b => b.Publisher)
+                .Distinct()
+                .OrderBy(p => p)
+                .ToList();
+
+            var authors = _context.Books
+                .Where(b => !string.IsNullOrEmpty(b.Author))
+                .Select(b => b.Author)
+                .Distinct()
+                .OrderBy(a => a)
+                .ToList();
+
+            return Ok(new
+            {
+                publishers,
+                authors,
+                publisherMap = new Dictionary<string, string>(),
+                authorMap = new Dictionary<string, string>()
+            });
         }
 
         // GET: api/books
@@ -117,10 +323,12 @@ namespace UserLibraryBackEndApi.Controllers
         [HttpPut("{id:guid}")]
         public async Task<IActionResult> Update(Guid id, [FromBody] UpdateBookRequest request)
         {
+
             var book = await _bookRepository.GetByIdAsync(id);
             if (book == null) return NotFound();
-
-            _mapper.Map(request, book);
+            try
+            {
+                _mapper.Map(request, book);
 
             // Convierte fechas a UTC si tienen valor y Kind no es UTC
             if (book.StartReadingDate.HasValue)
@@ -136,7 +344,12 @@ namespace UserLibraryBackEndApi.Controllers
             book.AddedDate = DateTime.SpecifyKind(book.AddedDate, DateTimeKind.Utc);
 
             await _bookRepository.UpdateAsync(book);
-            return NoContent();
+                return Ok(book);
+            }
+            catch (Exception ex)
+            { _logger.LogError(ex, "Error al actualizar el libro con ISBN: {ISBN}", book.ISBN );
+                return BadRequest("Error al actualizar el libro: " + ex.Message);
+            }
         }
 
         // DELETE: api/books/{id}
@@ -183,37 +396,29 @@ namespace UserLibraryBackEndApi.Controllers
             {
                 _logger.LogInformation("Importando libro con ISBN: {isbn}", request.ISBN);
 
-                // ✅ Validar ISBN
                 if (string.IsNullOrWhiteSpace(request.ISBN))
-                    return BadRequest("El ISBN es obligatorio.");
+                    return BadRequest(new { error = "El ISBN es obligatorio." });
 
                 var cleanIsbn = request.ISBN.Replace("-", "").Replace(" ", "");
                 if (cleanIsbn.Length != 10 && cleanIsbn.Length != 13)
-                    return BadRequest("El ISBN debe tener 10 o 13 dígitos.");
+                    return BadRequest(new { error = "El ISBN debe tener 10 o 13 dígitos." });
 
-                // ✅ Obtener UserId del JWT
                 var userId = User.GetUserId();
                 if (userId == Guid.Empty)
-                    return Unauthorized("No se pudo determinar el ID del usuario autenticado.");
+                    return Unauthorized(new { error = "No se pudo determinar el ID del usuario autenticado." });
 
-                // 🔍 Buscar primero en Google Books
+                // Buscar en Google Books y OpenLibrary
                 var googleBook = await _googleBooksService.SearchByIsbnAsync(cleanIsbn);
-
-                // 🔍 Si Google no tiene o tiene datos incompletos, consulta OpenLibrary
                 BookDto? openLibraryBook = null;
                 if (googleBook == null || HasMissingFields(googleBook))
                 {
                     openLibraryBook = await _openLibraryService.GetByIsbnAsync(cleanIsbn);
                 }
-
-                // 🔀 Merge
                 var merged = BookDataMerger.Merge(googleBook, openLibraryBook, _logger);
                 merged.ISBN = cleanIsbn;
                 merged.UserId = userId;
 
-                //_logger.LogInformation("🔍 Resultado del merge: {@merged}", merged);
-
-                // 📸 Descargar portada
+                // Descargar portada si existe
                 if (!string.IsNullOrWhiteSpace(merged.CoverUrl))
                 {
                     try
@@ -226,37 +431,34 @@ namespace UserLibraryBackEndApi.Controllers
                     }
                 }
 
-                // 🔎 Verificar si ya existe el libro
+                // Verificar si ya existe el libro
                 var existingBook = await _bookRepository.GetByIsbnAndUserIdAsync(cleanIsbn, userId);
-
                 if (existingBook != null)
                 {
                     var updatedBook = MapBookDtoToBook(merged, existingBook);
                     await _bookRepository.UpdateAsync(updatedBook);
-
-//                    _logger.LogInformation("✅ Libro actualizado: {@book}", updatedBook);
-
+                    var updatedBookDto = _mapper.Map<BookDto>(updatedBook);
                     return Ok(new
                     {
                         message = $"📘 El libro con ISBN {request.ISBN} ya existía y se ha actualizado.",
-                        book = updatedBook
+                        book = updatedBookDto
                     });
                 }
 
-                // ➕ Si no existe, lo creamos
-                //_logger.LogInformation("🚀 DTO final antes de mapear a Book: {@MergedBookDto}", merged);
-
+                // Crear nuevo libro
                 var newBook = MapBookDtoToBook(merged);
                 await _bookRepository.AddAsync(newBook);
-
-//                _logger.LogInformation("✅ Nuevo libro añadido: {@book}", newBook);
-
-                return CreatedAtAction(nameof(GetById), new { id = newBook.Id }, newBook);
+                var newBookDto = _mapper.Map<BookDto>(newBook);
+                return Ok(new
+                {
+                    message = $"📗 El libro con ISBN {request.ISBN} se ha importado correctamente.",
+                    book = newBookDto
+                });
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "💥 Error inesperado al importar libro.");
-                return StatusCode(500, "Error interno del servidor al importar el libro.");
+                return StatusCode(500, new { error = "Error interno del servidor al importar el libro." });
             }
         }
 
@@ -310,30 +512,6 @@ namespace UserLibraryBackEndApi.Controllers
 //            _logger.LogInformation("📝 Book final mapeado: {@Book}", book);
 
             return book;
-        }
-
-
-
-
-
-
-
-
-
-
-        private JsonElement? SelectBestItemWithThumbnail(JsonElement items)
-        {
-            foreach (var item in items.EnumerateArray())
-            {
-                if (item.TryGetProperty("volumeInfo", out var vi) &&
-                    vi.TryGetProperty("imageLinks", out var imgLinks) &&
-                    imgLinks.TryGetProperty("thumbnail", out _))
-                {
-                    return item;
-                }
-            }
-
-            return items[0];
         }
 
         public class ImportBookFromGoogleRequest
@@ -422,46 +600,6 @@ namespace UserLibraryBackEndApi.Controllers
             var books = await _bookRepository.GetBooksByUserIdAsync(userId);
             return Ok(_mapper.Map<IEnumerable<BookDto>>(books));
         }
-       
-
-        private BookDto? TryExtractBestGoogleItem(string json)
-        {
-            if (string.IsNullOrWhiteSpace(json)) return null;
-            var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("items", out var items) || items.GetArrayLength() == 0)
-                return null;
-
-            var item = items.EnumerateArray().FirstOrDefault();
-            if (!item.TryGetProperty("volumeInfo", out var vi)) return null;
-
-            return new BookDto
-            {
-                Title = vi.TryGetProperty("title", out var title) ? title.GetString() : null,
-                Author = vi.TryGetProperty("authors", out var authors) && authors.ValueKind == JsonValueKind.Array
-                    ? string.Join(", ", authors.EnumerateArray().Select(a => a.GetString()))
-                    : null,
-                Publisher = vi.TryGetProperty("publisher", out var publisher) ? publisher.GetString() : null,
-                Summary = vi.TryGetProperty("description", out var desc) ? desc.GetString() : null,
-                PageCount = vi.TryGetProperty("pageCount", out var pages) ? pages.GetInt32() : (int?)null,
-                Genre = vi.TryGetProperty("categories", out var cats) && cats.ValueKind == JsonValueKind.Array
-                    ? string.Join(", ", cats.EnumerateArray().Select(c => c.GetString()))
-                    : null,
-                PublicationDate = vi.TryGetProperty("publishedDate", out var date) &&
-                                  DateTime.TryParse(date.GetString(), out var pubDate)
-                    ? pubDate.ToUniversalTime()
-                    : null,
-                Language = vi.TryGetProperty("language", out var lang) ? lang.GetString() : null,
-                ThumbnailUrl = vi.TryGetProperty("imageLinks", out var images) &&
-                               images.TryGetProperty("thumbnail", out var thumb)
-                    ? thumb.GetString()
-                    : null,
-                Country = item.TryGetProperty("accessInfo", out var access) &&
-                          access.TryGetProperty("country", out var country)
-                    ? country.GetString()
-                    : null
-            };
-        }
-
     }
     public static class JsonExtensions
     {
@@ -485,5 +623,4 @@ namespace UserLibraryBackEndApi.Controllers
         }
 
     }
-
 }

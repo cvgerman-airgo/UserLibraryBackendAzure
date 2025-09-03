@@ -140,9 +140,12 @@ builder.Services.AddCors(options =>
     options.AddPolicy(name: allowedOrigins,
         policy =>
         {
-            policy.WithOrigins("http://localhost:3000") // Cambia si tu frontend está en otro puerto o dominio
-                  .AllowAnyHeader()
-                  .AllowAnyMethod();
+            policy.WithOrigins(
+            "http://localhost:3000",
+            "http://192.168.31.163:3000"
+        ) // Cambia si tu frontend está en otro puerto o dominio
+        .AllowAnyHeader()
+        .AllowAnyMethod();
         });
 });
 
@@ -163,7 +166,9 @@ builder.Services.AddHttpClient<IImageService, ImageService>();
 //builder.Logging.ClearProviders();
 //builder.Logging.AddConsole();
 
-var app = builder.Build();
+try
+{
+    var app = builder.Build();
 
 app.UseStaticFiles();
 
@@ -179,9 +184,17 @@ if (app.Environment.IsDevelopment())
 app.UseCors(allowedOrigins);
 
 // ✅ Redirección HTTPS y uso de controladores
-// app.UseHttpsRedirection();
+//app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 
 app.Run();
+
+}
+catch (Exception ex)
+{
+    Console.WriteLine("❌ Error al construir la app: " + ex.Message);
+    Console.WriteLine(ex.StackTrace);
+    throw;
+}
