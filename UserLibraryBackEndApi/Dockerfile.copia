@@ -1,8 +1,8 @@
-# Etapa de build
+﻿# Etapa de build
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Copiar solo los csproj y restaurar dependencias
+# Copiar los csproj y restaurar dependencias
 COPY Application/Application.csproj ./Application/
 COPY Infrastructure/Infrastructure.csproj ./Infrastructure/
 COPY Domain/Domain.csproj ./Domain/
@@ -10,13 +10,14 @@ COPY UserLibraryBackEndApi/UserLibraryBackEndApi.csproj ./UserLibraryBackEndApi/
 
 RUN dotnet restore ./UserLibraryBackEndApi/UserLibraryBackEndApi.csproj
 
-# Copiar solo código fuente necesario (excluyendo bin/ obj/ wwwroot/covers)
+# Copiar el resto del código
 COPY Application ./Application
 COPY Infrastructure ./Infrastructure
 COPY Domain ./Domain
 COPY UserLibraryBackEndApi ./UserLibraryBackEndApi
 
 WORKDIR /src/UserLibraryBackEndApi
+
 RUN dotnet publish -c Release -o /app/publish
 
 # Etapa final
@@ -24,8 +25,9 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0
 WORKDIR /app
 COPY --from=build /app/publish .
 
-# Montaje dinámico de wwwroot/covers desde el host
-VOLUME ["/app/wwwroot/covers"]
+# Copiar recursos estáticos y el certificado
+# COPY UserLibraryBackEndApi/cert.pfx /app/
+COPY UserLibraryBackEndApi/wwwroot /app/wwwroot
 
 EXPOSE 80
 ENV ASPNETCORE_URLS=http://+:80

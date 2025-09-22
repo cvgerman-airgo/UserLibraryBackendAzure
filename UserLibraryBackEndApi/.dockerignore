@@ -1,0 +1,6 @@
+bin/
+obj/
+wwwroot/covers
+*.user
+*.vs/
+.vscode/

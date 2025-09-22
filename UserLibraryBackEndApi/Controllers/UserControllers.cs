@@ -240,15 +240,38 @@ public class UsersController : ControllerBase
         try
         {
             var token = await _authService.AuthenticateAsync(request.Email, request.Password);
+            var user = await _userRepository.GetByEmailAsync(request.Email);
 
             if (token == null)
             {
-                _logger.LogWarning("Login fallido para {Email}", request.Email);
-                return Unauthorized("Email o contraseña incorrectos.");
+                string motivo = "Email o contraseña incorrectos.";
+                if (user != null && !user.EmailConfirmed)
+                    motivo = "El email no está verificado. Por favor, verifica tu correo electrónico.";
+
+                _logger.LogWarning("Login fallido para {Email}: {Motivo}", request.Email, motivo);
+                return Unauthorized(motivo);
+            }
+
+            if (user == null)
+            {
+                // Esto no debería ocurrir si token != null, pero por seguridad:
+                _logger.LogWarning("Login: Usuario no encontrado tras autenticación exitosa para {Email}", request.Email);
+                return Unauthorized("Usuario no encontrado.");
             }
 
             _logger.LogInformation("Login correcto para {Email}", request.Email);
-            return Ok(new { token });
+            return Ok(new
+            {
+                token,
+                user = new
+                {
+                    Id = user.Id,
+                    Email = user.Email,
+                    Name = user.Name,
+                    Role = user.Role,
+                    EmailConfirmed = user.EmailConfirmed
+                }
+            });
         }
         catch (Exception ex)
         {
@@ -256,6 +279,8 @@ public class UsersController : ControllerBase
             return StatusCode(500, "Error interno del servidor.");
         }
     }
+
+
 
     // POST: api/users/forgot-password
     // Este endpoint se usa para solicitar un enlace de restablecimiento de contraseña
