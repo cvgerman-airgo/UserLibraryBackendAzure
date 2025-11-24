@@ -21,7 +21,6 @@ namespace Infrastructure
             // Servicios
             services.AddScoped<ITokenService, TokenService>();
             services.AddScoped<ITranslationService, TranslationService>();
-            services.AddScoped<IImageService, ImageService>(); // 👈 Nuevo servicio de imágenes
 
             // Redis u otros servicios de infraestructura (si aplica)
             services.AddStackExchangeRedisCache(options =>

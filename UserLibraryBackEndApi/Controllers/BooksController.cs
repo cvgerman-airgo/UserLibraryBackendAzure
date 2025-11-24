@@ -27,7 +27,6 @@ namespace UserLibraryBackEndApi.Controllers
         private readonly IMapper _mapper;
         private readonly GoogleBooksService _googleBooksService;
         private readonly ILogger<BooksController> _logger;
-        private readonly IImageService _imageService;
         private readonly IOpenLibraryService _openLibraryService;
         private readonly ApplicationDbContext _context;
 
@@ -36,18 +35,57 @@ namespace UserLibraryBackEndApi.Controllers
             IMapper mapper,
             GoogleBooksService googleBooksService,
             ILogger<BooksController> logger,
-            IImageService imageService,
             IOpenLibraryService openLibraryService,
             ApplicationDbContext context)
-            
         {
             _bookRepository = bookRepository;
             _mapper = mapper;
             _googleBooksService = googleBooksService;
             _logger = logger;
-            _imageService = imageService;
             _openLibraryService = openLibraryService;
             _context = context;
+        }
+
+        // GET: api/books/internet-search?title=...&author=...&language=...
+        [HttpGet("internet-search")]
+        public async Task<IActionResult> InternetSearch([FromQuery] string? title, [FromQuery] string? author, [FromQuery] string? language)
+        {
+            var googleResults = await _googleBooksService.SearchGoogleBooksAsync(title, author, language);
+            var openResults = await _openLibraryService.SearchOpenLibraryAsync(title, author, language);
+            var allResults = new List<BookDto>();
+            if (googleResults != null) allResults.AddRange(googleResults);
+            if (openResults != null) allResults.AddRange(openResults);
+            // Normalizar y filtrar duplicados por ISBN
+            var normalized = allResults
+                .Where(b => !string.IsNullOrWhiteSpace(b.Title) && !string.IsNullOrWhiteSpace(b.Author))
+                .GroupBy(b => b.ISBN ?? b.Title)
+                .Select(g => g.First())
+                .Select(b => new BookDto
+                {
+                    Id = b.Id,
+                    UserId = b.UserId,
+                    Title = b.Title ?? "",
+                    Series = b.Series,
+                    ISBN = b.ISBN ?? "",
+                    CoverUrl = b.CoverUrl,
+                    ThumbnailUrl = b.ThumbnailUrl,
+                    Author = b.Author ?? "",
+                    Publisher = b.Publisher ?? "",
+                    Genre = b.Genre,
+                    Summary = b.Summary,
+                    PublicationDate = b.PublicationDate,
+                    PageCount = b.PageCount,
+                    Country = b.Country,
+                    Language = b.Language,
+                    AddedDate = b.AddedDate,
+                    StartReadingDate = b.StartReadingDate,
+                    EndReadingDate = b.EndReadingDate,
+                    Status = b.Status,
+                    LentTo = b.LentTo,
+                    CoverImage = b.CoverImage
+                })
+                .ToList();
+            return Ok(normalized);
         }
 
         [HttpGet("export")]
@@ -66,8 +104,6 @@ namespace UserLibraryBackEndApi.Controllers
                     Title = b.Title,
                     Series = b.Series,
                     ISBN = b.ISBN,
-                    CoverUrl = b.CoverUrl,
-                    ThumbnailUrl = b.ThumbnailUrl,
                     Author = b.Author,
                     Publisher = b.Publisher,
                     Genre = b.Genre,
@@ -163,16 +199,17 @@ namespace UserLibraryBackEndApi.Controllers
                     // Convertir todas las fechas a UTC
                     DateTimeHelper.FixDateTimesToUtc(record);
 
-                    // Buscar libro existente
-                    var existingBook = await _bookRepository.GetByUserIdAndIsbnAsync(userId, record.ISBN);
+                    // Buscar libro existente solo si el ISBN no es nulo o vacío
+                    var isbnValue = record.ISBN ?? string.Empty;
+                    var existingBook = !string.IsNullOrWhiteSpace(isbnValue)
+                        ? await _bookRepository.GetByUserIdAndIsbnAsync(userId, isbnValue)
+                        : null;
 
                     if (existingBook != null)
                     {
                         // Actualizar libro existente
                         existingBook.Title = record.Title;
                         existingBook.Series = record.Series;
-                        existingBook.CoverUrl = record.CoverUrl;
-                        existingBook.ThumbnailUrl = record.ThumbnailUrl;
                         existingBook.Author = record.Author;
                         existingBook.Publisher = record.Publisher;
                         existingBook.Genre = record.Genre;
@@ -323,15 +360,21 @@ namespace UserLibraryBackEndApi.Controllers
         [HttpPut("{id:guid}")]
         public async Task<IActionResult> Update(Guid id, [FromBody] UpdateBookRequest request)
         {
+            Console.WriteLine("=================");
+            Console.WriteLine($"PUT RECIBIDO PARA: {id}");
+            Console.WriteLine($"REQUEST IMAGEN: {request.CoverImage?.Length ?? 0} bytes");
+            Console.WriteLine("=================");
 
             var book = await _bookRepository.GetByIdAsync(id);
             if (book == null) return NotFound();
             try
             {
                 _mapper.Map(request, book);
+                book.CoverImage = request.CoverImage;
+                Console.WriteLine($"ANTES DE GUARDAR: {book.CoverImage?.Length ?? 0} bytes");
 
-            // Convierte fechas a UTC si tienen valor y Kind no es UTC
-            if (book.StartReadingDate.HasValue)
+                // Convierte fechas a UTC si tienen valor y Kind no es UTC
+                if (book.StartReadingDate.HasValue)
                 book.StartReadingDate = DateTime.SpecifyKind(book.StartReadingDate.Value, DateTimeKind.Utc);
 
             if (book.EndReadingDate.HasValue)
@@ -343,8 +386,13 @@ namespace UserLibraryBackEndApi.Controllers
             // book.AddedDate es DateTime (no nullable), así que no uses HasValue
             book.AddedDate = DateTime.SpecifyKind(book.AddedDate, DateTimeKind.Utc);
 
-            await _bookRepository.UpdateAsync(book);
-                return Ok(book);
+                await _bookRepository.UpdateAsync(book);
+                var savedBook = await _bookRepository.GetByIdAsync(id);
+                if (savedBook != null)
+                    Console.WriteLine($"DESPUES DE GUARDAR: {savedBook.CoverImage?.Length ?? 0} bytes");
+                else
+                    Console.WriteLine("DESPUES DE GUARDAR: libro no encontrado");
+                return Ok(savedBook);
             }
             catch (Exception ex)
             { _logger.LogError(ex, "Error al actualizar el libro con ISBN: {ISBN}", book.ISBN );
@@ -418,18 +466,30 @@ namespace UserLibraryBackEndApi.Controllers
                 merged.ISBN = cleanIsbn;
                 merged.UserId = userId;
 
-                // Descargar portada si existe
-                if (!string.IsNullOrWhiteSpace(merged.CoverUrl))
+                // Descargar ambas imágenes y guardar la más pequeña en CoverImage
+                async Task<byte[]?> DownloadImageAsync(string? url)
                 {
+                    if (string.IsNullOrWhiteSpace(url)) return null;
                     try
                     {
-                        (merged.CoverUrl, merged.ThumbnailUrl) = await _imageService.DownloadAndSaveCoverAsync(merged.CoverUrl, cleanIsbn);
+                        using var httpClient = new HttpClient();
+                        var imgBytes = await httpClient.GetByteArrayAsync(url);
+                        return imgBytes;
                     }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning("⚠️ Error al descargar imagen: {Message}", ex.Message);
-                    }
+                    catch { return null; }
                 }
+
+                byte[]? coverBytes = await DownloadImageAsync(merged.CoverUrl);
+                byte[]? thumbBytes = await DownloadImageAsync(merged.ThumbnailUrl);
+
+                if (coverBytes != null && thumbBytes != null)
+                    merged.CoverImage = coverBytes.Length <= thumbBytes.Length ? coverBytes : thumbBytes;
+                else if (coverBytes != null)
+                    merged.CoverImage = coverBytes;
+                else if (thumbBytes != null)
+                    merged.CoverImage = thumbBytes;
+                else
+                    merged.CoverImage = null;
 
                 // Verificar si ya existe el libro
                 var existingBook = await _bookRepository.GetByIsbnAndUserIdAsync(cleanIsbn, userId);
@@ -469,7 +529,6 @@ namespace UserLibraryBackEndApi.Controllers
                 || string.IsNullOrWhiteSpace(book.Summary)
                 || string.IsNullOrWhiteSpace(book.Publisher)
                 || string.IsNullOrWhiteSpace(book.Genre)
-                || string.IsNullOrWhiteSpace(book.CoverUrl)
                 || !book.PageCount.HasValue
                 || !book.PublicationDate.HasValue;
         }
@@ -495,10 +554,8 @@ namespace UserLibraryBackEndApi.Controllers
             book.Language = dto.Language;
             book.Country = dto.Country;
             book.LentTo = dto.LentTo;
-
-            // Imagenes blindadas
-            book.CoverUrl = dto.CoverUrl ?? book.CoverUrl ?? "/covers/default.jpg";
-            book.ThumbnailUrl = dto.ThumbnailUrl ?? book.ThumbnailUrl ?? "/covers/default_thumb.jpg";
+            // Imagen
+            book.CoverImage = dto.CoverImage;
 
             // Números y fechas
             book.PublicationDate = dto.PublicationDate;
@@ -517,35 +574,6 @@ namespace UserLibraryBackEndApi.Controllers
         public class ImportBookFromGoogleRequest
         {
             public string ISBN { get; set; } = string.Empty;
-        }
-
-        [HttpPost("upload-cover")]
-        public async Task<IActionResult> UploadCover([FromBody] UploadCoverRequest request, [FromServices] IImageService imageService)
-        {
-            if (string.IsNullOrWhiteSpace(request.ImageUrl) || string.IsNullOrWhiteSpace(request.Isbn))
-                return BadRequest("Faltan datos.");
-
-            (string? fullPath, string? thumbnailPath)? result;
-
-            if (request.ImageUrl.StartsWith("data:image/")) // base64
-            {
-                result = await imageService.SaveBase64ImageAsync(request.ImageUrl, request.Isbn);
-            }
-            else // imagen desde URL
-            {
-                result = await imageService.DownloadAndSaveCoverAsync(request.ImageUrl, request.Isbn);
-            }
-
-            if (result is { fullPath: not null })
-            {
-                return Ok(new
-                {
-                    relativePath = result.Value.fullPath,
-                    thumbnailPath = result.Value.thumbnailPath
-                });
-            }
-
-            return StatusCode(500, "No se pudo guardar la imagen.");
         }
 
         // Clase para recibir la petición
@@ -579,7 +607,6 @@ namespace UserLibraryBackEndApi.Controllers
             book.Genre = request.Genre ?? book.Genre;
             book.PageCount = request.PageCount ?? book.PageCount;
             book.PublicationDate = request.PublicationDate?.ToUniversalTime() ?? book.PublicationDate;
-            book.CoverUrl = request.CoverUrl ?? book.CoverUrl;
             book.Language = request.Language ?? book.Language;
             book.Country = request.Country ?? book.Country;
             book.Status = request.Status ?? book.Status;

@@ -8,14 +8,10 @@ public class UpdateBookRequest
 {
     [Required]
     public string Title { get; set; } = default!;
-
     public string? Series { get; set; }
     public string? ISBN { get; set; }
-    public string? CoverUrl { get; set; }
-
     [Required]
     public string Author { get; set; } = default!;
-
     public string? Publisher { get; set; }
     public string? Genre { get; set; }
     public string? Summary { get; set; }
@@ -28,5 +24,6 @@ public class UpdateBookRequest
     public string? LentTo { get; set; }
     public string? Language { get; set; }
     public string? Country { get; set; }
+    public byte[]? CoverImage { get; set; }
 }
 

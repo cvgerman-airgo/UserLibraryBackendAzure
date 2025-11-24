@@ -8,14 +8,11 @@ public class CreateBookRequest
 {
     [Required]
     public string Title { get; set; } = default!;
-
     public string? Series { get; set; }
     public string? ISBN { get; set; }
-    public string? CoverUrl { get; set; }
 
     [Required]
     public string Author { get; set; } = default!;
-
     public string? Publisher { get; set; }
     public string? Genre { get; set; }
     public string? Summary { get; set; }
@@ -26,5 +23,6 @@ public class CreateBookRequest
     [EnumDataType(typeof(ReadingStatus))]
     public ReadingStatus Status { get; set; } = ReadingStatus.NotRead; // 0: No leído, 1: Leyendo, 2: Terminado, 3: No terminado
     public string? LentTo { get; set; }
+    public byte[]? CoverImage { get; set; }
 }
 

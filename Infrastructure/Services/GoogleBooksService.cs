@@ -107,10 +107,74 @@ public class GoogleBooksService : IGoogleBooksService
                 return new List<BookDto>();
             }
 
-            return googleData.Items
-                .Select(item => item.ToBookDto())
-                .Where(dto => dto != null && !string.IsNullOrWhiteSpace(dto.ISBN))
-                .ToList()!;
+            var result = new List<BookDto>();
+            foreach (var item in googleData.Items)
+            {
+                var dto = await ToBookDtoWithCoverImageAsync(item);
+                if (dto != null && !string.IsNullOrWhiteSpace(dto.ISBN))
+                    result.Add(dto);
+            }
+            return result;
+            // Nuevo método para descargar la portada y asignarla a CoverImage
+            async Task<BookDto?> ToBookDtoWithCoverImageAsync(GoogleBookItem item)
+            {
+                if (item?.VolumeInfo == null) return null;
+                // Extraer el ISBN preferentemente ISBN_13, si no, ISBN_10
+                string? isbn = null;
+                if (item.VolumeInfo.IndustryIdentifiers != null)
+                {
+                    var isbn13 = item.VolumeInfo.IndustryIdentifiers.FirstOrDefault(i => i.Type == "ISBN_13")?.Identifier;
+                    var isbn10 = item.VolumeInfo.IndustryIdentifiers.FirstOrDefault(i => i.Type == "ISBN_10")?.Identifier;
+                    isbn = isbn13 ?? isbn10;
+                }
+                var dto = new BookDto
+                {
+                    Title = item.VolumeInfo.Title ?? "Sin título",
+                    Author = item.VolumeInfo.Authors != null ? string.Join(", ", item.VolumeInfo.Authors) : "Sin autor",
+                    Publisher = item.VolumeInfo.Publisher,
+                    Genre = item.VolumeInfo.Categories != null ? string.Join(", ", item.VolumeInfo.Categories) : null,
+                    Summary = item.VolumeInfo.Description,
+                    PageCount = item.VolumeInfo.PageCount,
+                    Language = item.VolumeInfo.Language,
+                    ISBN = isbn,
+                    PublicationDate = ParseDate(item.VolumeInfo.PublishedDate),
+                    Country = item.AccessInfo?.Country
+                };
+                // Descargar imagen de portada si existe
+                string? imageUrl = item.VolumeInfo.ImageLinks?.Thumbnail;
+                if (!string.IsNullOrWhiteSpace(imageUrl))
+                {
+                    if (imageUrl.StartsWith("http:")) imageUrl = imageUrl.Replace("http:", "https:");
+                    try
+                    {
+                        var imgBytes = await _httpClient.GetByteArrayAsync(imageUrl);
+                        dto.CoverImage = imgBytes;
+                    }
+                    catch { dto.CoverImage = null; }
+                }
+                // Si no se pudo descargar Thumbnail, intenta con smallThumbnail
+                if (dto.CoverImage == null && item.VolumeInfo.ImageLinks?.SmallThumbnail != null)
+                {
+                    string? smallImageUrl = item.VolumeInfo.ImageLinks.SmallThumbnail;
+                    if (smallImageUrl.StartsWith("http:")) smallImageUrl = smallImageUrl.Replace("http:", "https:");
+                    try
+                    {
+                        var imgBytes = await _httpClient.GetByteArrayAsync(smallImageUrl);
+                        dto.CoverImage = imgBytes;
+                    }
+                    catch { dto.CoverImage = null; }
+                }
+                return dto;
+            }
+
+            DateTime? ParseDate(string? date)
+            {
+                if (string.IsNullOrWhiteSpace(date)) return null;
+                if (DateTime.TryParse(date, out var dt)) return dt;
+                // Google Books puede devolver solo el año
+                if (int.TryParse(date, out var year)) return new DateTime(year, 1, 1);
+                return null;
+            }
         }
         catch (Exception ex)
         {

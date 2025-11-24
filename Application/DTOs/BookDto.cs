@@ -27,5 +27,6 @@ public class BookDto
     public DateTime? EndReadingDate { get; set; }
     public ReadingStatus Status { get; set; } = ReadingStatus.NotRead;
     public string? LentTo { get; set; }
+    public byte[]? CoverImage { get; set; }
 }
 

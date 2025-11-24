@@ -6,6 +6,7 @@ namespace Application.Interfaces
     public interface IOpenLibraryService
     {
 //        Task<string> GetBookDataByIsbnAsync(string isbn);
-        Task<BookDto?> GetByIsbnAsync(string isbn); // <-- Añade esta firma
+        Task<BookDto?> GetByIsbnAsync(string isbn);
+        Task<List<BookDto>> SearchOpenLibraryAsync(string? title, string? author, string? language);
     }
 }

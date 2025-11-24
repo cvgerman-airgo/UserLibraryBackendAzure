@@ -14,6 +14,7 @@ namespace Domain.Entities
         public string? CoverUrl { get; set; }   // Ruta relativa a imagen grande
 //        public string? CoverFullPath { get; set; } // Ruta relativa a miniatura
         public string? ThumbnailUrl { get; set; }
+        public byte[]? CoverImage { get; set; }
         [Required]
         public string Author { get; set; } = string.Empty;
         public string? Publisher { get; set; }

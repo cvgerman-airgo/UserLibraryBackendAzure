@@ -1,55 +1,47 @@
 services:
-  redis:
-    image: redis:7.2-alpine
-    container_name: redis
-    ports:
-      - "6379:6379"
-    restart: unless-stopped
-
-  postgres:
-    image: postgres:16-alpine
-    container_name: postgres
+  userlibrary-postgres:
+    image: postgres:15
+    container_name: userlibrary-postgres
+    restart: always
     environment:
-      POSTGRES_DB: userlibrarydb
-      POSTGRES_USER: kraken
-      POSTGRES_PASSWORD: 1357Kraken1357
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+      POSTGRES_DB: UserLibraryDb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: kraken13
     ports:
       - "5433:5432"
-    restart: unless-stopped
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - userlibrary-net
 
-  backend:
+  userlibrary-redis:
+    image: redis:latest
+    container_name: userlibrary-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - userlibrary-net
+
+  userlibrary-backend:
     build:
       context: .
       dockerfile: UserLibraryBackEndApi/Dockerfile
-    container_name: backend
+    container_name: userlibrary-backend-local
+    restart: always
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
-      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=userlibrarydb;Username=kraken;Password=1357Kraken1357
-      - Jwt__Key=2V8u7uZBKmJtFxS9rM4nLwYc6eR2p9Xa
-      - Jwt__Issuer=http://localhost
-      - Jwt__Audience=http://localhost
-      - Redis__Connection=redis:6379
-      - GoogleBooks__ApiKey=AIzaSyB6iqwKxrPx_Jxr2xw1QSk86u_RH6xAMM0
-    depends_on:
-      - postgres
-      - redis
+      ASPNETCORE_ENVIRONMENT: Docker
     ports:
-      - "5000:80"
-    volumes:
-      - ./UserLibraryBackEndApi/wwwroot/covers:/app/wwwroot/covers
-    restart: unless-stopped
-
-  frontend:
-    container_name: frontend
-    build:
-      context: .
-      dockerfile: userlibrary-frontend/Dockerfile.prod   # siempre usas el de prod
-    ports:
-      - "3000:80"   # el frontend queda expuesto en http://localhost
+      - "8080:80"
     depends_on:
-      - backend   # espera a que el backend esté levantado
+      - userlibrary-postgres
+      - userlibrary-redis
+    networks:
+      - userlibrary-net
 
 volumes:
   postgres_data:
+
+networks:
+  userlibrary-net:
+    driver: bridge

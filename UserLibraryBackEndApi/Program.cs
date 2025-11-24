@@ -21,7 +21,9 @@ var isMigration = args.Contains("--is-migration");
 
 builder.Configuration
     .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+    .AddJsonFile($"appsettings.{env.EnvironmentName}.json", optional: true, reloadOnChange: true)
     .AddEnvironmentVariables();
+
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 // Console.WriteLine($"🧠 Usando cadena de conexión: {connectionString}");
 // Console.WriteLine("🌍 ASPNETCORE_ENVIRONMENT: " + env.EnvironmentName);
@@ -142,12 +144,15 @@ builder.Services.AddCors(options =>
         {
             policy.WithOrigins(
             "http://localhost:3000",
-            "http://192.168.31.163:3000"
+            "http://192.168.31.163:3000",            
+            "http://localhost:3001",
+            "http://192.168.31.163:3001"
         ) // Cambia si tu frontend está en otro puerto o dominio
         .AllowAnyHeader()
-        .AllowAnyMethod();
+        .AllowAnyMethod()
+        .AllowCredentials();
         });
-});
+    });
 
 builder.Services.AddInfrastructure(builder.Configuration);
 
@@ -158,7 +163,6 @@ builder.Services.AddScoped<IBooksRepository, BooksRepository>();
 builder.Services.AddHttpClient<GoogleBooksService>();
 
 builder.Services.AddHttpClient<IOpenLibraryService, OpenLibraryService>();
-builder.Services.AddHttpClient<IImageService, ImageService>();
 
 //Con eso limpias duplicados en el log
 
@@ -174,11 +178,11 @@ app.UseStaticFiles();
 
 app.UseRouting();
 // ✅ Middleware de desarrollo: Swagger
-if (app.Environment.IsDevelopment())
-{
+//if (app.Environment.IsDevelopment())
+//{
     app.UseSwagger();
     app.UseSwaggerUI();
-}
+//}
 
 // Habilita CORS antes de autenticación/autorización
 app.UseCors(allowedOrigins);
